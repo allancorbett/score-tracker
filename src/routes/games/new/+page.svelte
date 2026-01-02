@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { goto } from '$app/navigation';
 	import AddPlayerInput from '$lib/components/AddPlayerInput.svelte';
 	import { generateGameName } from '$lib/types';
+	import { localGames } from '$lib/stores/localGames';
 
 	let { data, form } = $props();
 
@@ -10,8 +12,9 @@
 		isUser: boolean;
 	}
 
-	let players = $state<Player[]>([{ name: data.userFirstName, isUser: true }]);
+	let players = $state<Player[]>([{ name: data.userFirstName, isUser: !data.isGuest }]);
 	let submitting = $state(false);
+	let error = $state('');
 
 	const gameName = $derived(generateGameName(players.map((p) => p.name)));
 	const canCreate = $derived(players.length >= 2 && players.length <= 7);
@@ -23,8 +26,34 @@
 	}
 
 	function removePlayer(index: number) {
-		if (!players[index].isUser) {
+		// For guests, allow removing any player. For logged-in users, can't remove self.
+		if (data.isGuest || !players[index].isUser) {
 			players = players.filter((_, i) => i !== index);
+		}
+	}
+
+	function createLocalGame() {
+		if (!canCreate) return;
+
+		submitting = true;
+		error = '';
+
+		try {
+			const game = localGames.createGame(
+				gameName,
+				players.map((p) => p.name)
+			);
+			goto(`/games/${game.id}`);
+		} catch (e) {
+			error = 'Failed to create game';
+			submitting = false;
+		}
+	}
+
+	function handleSubmit(e: Event) {
+		if (data.isGuest) {
+			e.preventDefault();
+			createLocalGame();
 		}
 	}
 </script>
@@ -35,7 +64,7 @@
 
 <div class="p-4 max-w-lg mx-auto">
 	<header class="flex items-center gap-4 mb-6">
-		<a href="/" class="p-2 -ml-2 text-gray-500 hover:text-gray-700">
+		<a href="/" class="p-2 -ml-2 text-gray-500 hover:text-gray-700" aria-label="Back">
 			<svg
 				xmlns="http://www.w3.org/2000/svg"
 				class="h-6 w-6"
@@ -56,6 +85,7 @@
 
 	<form
 		method="POST"
+		onsubmit={handleSubmit}
 		use:enhance={() => {
 			submitting = true;
 			return async ({ update }) => {
@@ -76,11 +106,11 @@
 					>
 						<span class="text-gray-800">
 							{player.name}
-							{#if player.isUser}
+							{#if player.isUser && !data.isGuest}
 								<span class="text-gray-500">(you)</span>
 							{/if}
 						</span>
-						{#if player.isUser}
+						{#if player.isUser && !data.isGuest}
 							<span class="text-green-600">
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
@@ -100,6 +130,7 @@
 								type="button"
 								onclick={() => removePlayer(index)}
 								class="text-gray-400 hover:text-red-500 transition-colors"
+								aria-label="Remove player"
 							>
 								<svg
 									xmlns="http://www.w3.org/2000/svg"
@@ -131,9 +162,16 @@
 			<p class="text-lg font-medium text-gray-900">{gameName || 'Add players...'}</p>
 		</div>
 
-		{#if form?.error}
+		{#if data.isGuest}
+			<div class="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-sm">
+				This game will be saved locally on this device.
+				<a href="/auth" class="underline font-medium">Sign in</a> to sync across devices.
+			</div>
+		{/if}
+
+		{#if form?.error || error}
 			<div class="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl text-red-800">
-				{form.error}
+				{form?.error || error}
 			</div>
 		{/if}
 

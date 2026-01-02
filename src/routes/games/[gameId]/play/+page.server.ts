@@ -3,11 +3,24 @@ import type { PageServerLoad, Actions } from './$types';
 import type { Game, GamePlayer, Session, Score } from '$lib/types';
 
 export const load: PageServerLoad = async ({ locals, params }) => {
+	const { gameId } = params;
+
+	// Local games are handled client-side
+	if (gameId.startsWith('local_')) {
+		return {
+			isLocalGame: true,
+			gameId,
+			game: null,
+			players: [],
+			session: null,
+			scores: []
+		};
+	}
+
+	// Server games require authentication
 	if (!locals.session) {
 		throw redirect(303, '/auth');
 	}
-
-	const { gameId } = params;
 
 	// Get game
 	const { data: game, error: gameError } = (await locals.supabase
@@ -70,6 +83,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		.eq('session_id', session.id)) as { data: Score[] | null };
 
 	return {
+		isLocalGame: false,
+		gameId,
 		game,
 		players,
 		session,

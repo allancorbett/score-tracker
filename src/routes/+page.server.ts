@@ -1,4 +1,3 @@
-import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import type { Game } from '$lib/types';
 
@@ -13,14 +12,15 @@ interface ScoreWithSession {
 }
 
 export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.session) {
-		throw redirect(303, '/auth');
+	// Allow guest access - return empty games for non-authenticated users
+	if (!locals.session || !locals.user?.id) {
+		return {
+			games: [],
+			isGuest: true
+		};
 	}
 
-	const userId = locals.user?.id;
-	if (!userId) {
-		throw redirect(303, '/auth');
-	}
+	const userId = locals.user.id;
 
 	// Get games where user is a player
 	const { data: gamePlayers } = (await locals.supabase
@@ -39,7 +39,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	if (!gamePlayers || gamePlayers.length === 0) {
 		return {
-			games: []
+			games: [],
+			isGuest: false
 		};
 	}
 
@@ -84,12 +85,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 			return {
 				...game,
 				sessionCount: sessionCount || 0,
-				userScore
+				userScore,
+				isLocal: false
 			};
 		})
 	);
 
 	return {
-		games: gamesWithStats.filter((g): g is NonNullable<typeof g> => g !== null)
+		games: gamesWithStats.filter((g): g is NonNullable<typeof g> => g !== null),
+		isGuest: false
 	};
 };
