@@ -1,6 +1,10 @@
 -- Whist Score Keeper Database Schema
 -- Run this in your Supabase SQL Editor
 
+-- ============================================
+-- STEP 1: Create all tables first
+-- ============================================
+
 -- Users table (extends Supabase auth.users)
 create table public.profiles (
   id uuid references auth.users on delete cascade primary key,
@@ -8,9 +12,61 @@ create table public.profiles (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- Row Level Security for profiles
-alter table public.profiles enable row level security;
+-- Games table
+create table public.games (
+  id uuid default gen_random_uuid() primary key,
+  name text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  created_by uuid references public.profiles(id) on delete set null
+);
 
+-- Game Players (links users to games, or stores name-only players)
+create table public.game_players (
+  id uuid default gen_random_uuid() primary key,
+  game_id uuid references public.games(id) on delete cascade not null,
+  user_id uuid references public.profiles(id) on delete set null,
+  player_name text not null,
+  player_order int not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  unique(game_id, player_order)
+);
+
+-- Sessions table
+create table public.sessions (
+  id uuid default gen_random_uuid() primary key,
+  game_id uuid references public.games(id) on delete cascade not null,
+  played_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  is_complete boolean default false not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Scores table (one row per player per round)
+create table public.scores (
+  id uuid default gen_random_uuid() primary key,
+  session_id uuid references public.sessions(id) on delete cascade not null,
+  game_player_id uuid references public.game_players(id) on delete cascade not null,
+  round_number int not null check (round_number >= 1 and round_number <= 7),
+  tricks_won int not null check (tricks_won >= 0 and tricks_won <= 7),
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  unique(session_id, game_player_id, round_number)
+);
+
+-- ============================================
+-- STEP 2: Enable RLS on all tables
+-- ============================================
+
+alter table public.profiles enable row level security;
+alter table public.games enable row level security;
+alter table public.game_players enable row level security;
+alter table public.sessions enable row level security;
+alter table public.scores enable row level security;
+
+-- ============================================
+-- STEP 3: Create RLS policies
+-- ============================================
+
+-- Profiles policies
 create policy "Users can view all profiles"
   on public.profiles for select
   using (true);
@@ -23,16 +79,7 @@ create policy "Users can insert own profile"
   on public.profiles for insert
   with check (auth.uid() = id);
 
--- Games table
-create table public.games (
-  id uuid default gen_random_uuid() primary key,
-  name text not null,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  created_by uuid references public.profiles(id) on delete set null
-);
-
-alter table public.games enable row level security;
-
+-- Games policies
 create policy "Users can view games they're part of"
   on public.games for select
   using (
@@ -57,19 +104,7 @@ create policy "Game members can update game"
     )
   );
 
--- Game Players (links users to games, or stores name-only players)
-create table public.game_players (
-  id uuid default gen_random_uuid() primary key,
-  game_id uuid references public.games(id) on delete cascade not null,
-  user_id uuid references public.profiles(id) on delete set null,
-  player_name text not null,
-  player_order int not null,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  unique(game_id, player_order)
-);
-
-alter table public.game_players enable row level security;
-
+-- Game Players policies
 create policy "Users can view players in their games"
   on public.game_players for select
   using (
@@ -84,17 +119,7 @@ create policy "Authenticated users can add players to games"
   on public.game_players for insert
   with check (auth.uid() is not null);
 
--- Sessions table
-create table public.sessions (
-  id uuid default gen_random_uuid() primary key,
-  game_id uuid references public.games(id) on delete cascade not null,
-  played_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  is_complete boolean default false not null,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
-alter table public.sessions enable row level security;
-
+-- Sessions policies
 create policy "Users can view sessions in their games"
   on public.sessions for select
   using (
@@ -125,20 +150,7 @@ create policy "Game members can update sessions"
     )
   );
 
--- Scores table (one row per player per round)
-create table public.scores (
-  id uuid default gen_random_uuid() primary key,
-  session_id uuid references public.sessions(id) on delete cascade not null,
-  game_player_id uuid references public.game_players(id) on delete cascade not null,
-  round_number int not null check (round_number >= 1 and round_number <= 7),
-  tricks_won int not null check (tricks_won >= 0 and tricks_won <= 7),
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  unique(session_id, game_player_id, round_number)
-);
-
-alter table public.scores enable row level security;
-
+-- Scores policies
 create policy "Users can view scores in their games"
   on public.scores for select
   using (
@@ -172,6 +184,10 @@ create policy "Game members can update scores"
     )
   );
 
+-- ============================================
+-- STEP 4: Create functions and triggers
+-- ============================================
+
 -- Function to update updated_at timestamp
 create or replace function public.handle_updated_at()
 returns trigger as $$
@@ -199,6 +215,10 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
 
+-- ============================================
+-- STEP 5: Create views and indexes
+-- ============================================
+
 -- Useful views
 create or replace view public.game_standings as
 select
@@ -213,7 +233,7 @@ left join public.sessions s on s.game_id = gp.game_id and s.is_complete = true
 left join public.scores sc on sc.game_player_id = gp.id and sc.session_id = s.id
 group by gp.game_id, gp.id, gp.player_name, gp.user_id;
 
--- Index for performance
+-- Indexes for performance
 create index idx_scores_session_id on public.scores(session_id);
 create index idx_scores_game_player_id on public.scores(game_player_id);
 create index idx_sessions_game_id on public.sessions(game_id);
