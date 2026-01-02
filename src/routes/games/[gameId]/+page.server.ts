@@ -7,11 +7,25 @@ interface SessionWithScores extends Session {
 }
 
 export const load: PageServerLoad = async ({ locals, params }) => {
+	const { gameId } = params;
+
+	// Local games are handled client-side
+	if (gameId.startsWith('local_')) {
+		return {
+			isLocalGame: true,
+			gameId,
+			game: null,
+			players: [],
+			sessions: [],
+			standings: [],
+			incompleteSession: null
+		};
+	}
+
+	// Server games require authentication
 	if (!locals.session) {
 		throw redirect(303, '/auth');
 	}
-
-	const { gameId } = params;
 
 	// Get game with players
 	const { data: game, error: gameError } = (await locals.supabase
@@ -75,6 +89,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	const incompleteSession = sessions?.find((s) => !s.is_complete);
 
 	return {
+		isLocalGame: false,
+		gameId,
 		game,
 		players: players || [],
 		sessions: sessions || [],

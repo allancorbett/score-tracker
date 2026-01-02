@@ -3,31 +3,33 @@ import type { PageServerLoad, Actions } from './$types';
 import { generateGameName, type Game } from '$lib/types';
 
 export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.session) {
-		throw redirect(303, '/auth');
-	}
-
-	const userId = locals.user?.id;
-	if (!userId) {
-		throw redirect(303, '/auth');
+	// Allow guest access
+	if (!locals.session || !locals.user?.id) {
+		return {
+			userFirstName: 'Player 1',
+			isGuest: true
+		};
 	}
 
 	// Get user's profile for their name
 	const { data: profile } = (await locals.supabase
 		.from('profiles')
 		.select('first_name')
-		.eq('id', userId)
+		.eq('id', locals.user.id)
 		.single()) as { data: { first_name: string } | null };
 
 	return {
-		userFirstName: profile?.first_name || 'You'
+		userFirstName: profile?.first_name || 'You',
+		isGuest: false
 	};
 };
 
 export const actions: Actions = {
 	default: async ({ request, locals }) => {
+		// Only handle server-side game creation for logged-in users
 		if (!locals.user) {
-			throw redirect(303, '/auth');
+			// Guest users create games client-side
+			return fail(400, { error: 'Guest users should create games client-side' });
 		}
 
 		const formData = await request.formData();
